@@ -8,11 +8,27 @@ import * as THREE from 'three';
 //import {Ammo} from '../ammo/builds/ammo.js';
 
 import ControlsMenu from './Controls'
+import ReactCSSTransitionGroup from 'react-addons-css-transition-group';
+import { bounce } from 'react-animations';
+import posed from 'react-pose';
+
+const bounceAnimation = keyframes`${bounce}`;
+const BouncyDiv = styled.div`
+  animation: 1s ${bounceAnimation};
+`;
+
+const CheckBox = posed.div({
+  active: { left: 30, transition: { duration: 500 } },
+  inactive: { left: 3, transition: { duration: 500 } }
+})
+
 const grid = require('../assets/images/grid.png')
 const wood = require('../assets/images/wood.jpg')
 //const Ammo = require('../ammo.js-master/builds/ammo.js')
 
 const OrbitControls = require('three-orbit-controls')(THREE);
+var Physijs = require('physijs-webpack');
+
 var container;
 var canvas;
 var container, stats;
@@ -26,6 +42,7 @@ var canvasPosition;
 var materialplane = new THREE.MeshPhongMaterial({ side: THREE.DoubleSide, color: 0x888888, specular:0xbbaa99, shininess:14, combine:THREE.MultiplyOperation } );
 var rollOverMesh, rollOverMaterial;
 var objectsOfScenes = [];
+var objectsSave = [];
 var mouse, raycaster, isShiftDown = false;
 var cubeGeo, cubeMaterial;
 var cubeGeo = new THREE.BoxBufferGeometry( 50, 50, 50 );
@@ -36,6 +53,9 @@ var collidableMeshList = [];
 var textureLoader;
 
 //physics
+var physicScene = Physijs.Scene
+
+
 var clock = new THREE.Clock();
 var gravityConstant = - 9.8;
 var physicsWorld;
@@ -60,6 +80,7 @@ class AppContainerComponent extends React.Component {
       kaplaDimensions : [10,30,150],
       kaplaOffset : [0,0,150/2],
       rotation:0,
+      gravityActive : false
      }
   }
 
@@ -80,7 +101,8 @@ class AppContainerComponent extends React.Component {
 
 
   componentDidMount = async () => {
-    scene = new THREE.Scene();
+    scene = new Physijs.Scene({ fixedTimeStep: 1 / 120 });
+    scene.setGravity(new THREE.Vector3( 0, 0, -0 ));
     scene.background = new THREE.Color( 0xbfd1e5 );
     renderer = new THREE.WebGLRenderer();
 
@@ -109,11 +131,6 @@ class AppContainerComponent extends React.Component {
 
     canvasPosition = renderer.domElement.getBoundingClientRect()
 
-    var geometry = new THREE.BoxGeometry( 1, 1, 1 );
-    var material = new THREE.MeshBasicMaterial( { color: 0x00ff00 } );
-    var cube = new THREE.Mesh( geometry, material );
-    scene.add( cube );
-
     var ambientLight = new THREE.AmbientLight( 0x404040 );
 		scene.add( ambientLight );
 		var light = new THREE.DirectionalLight( 0xffffff, 2 );
@@ -138,10 +155,12 @@ class AppContainerComponent extends React.Component {
     helper.material.transparent = true;
 
     var planesol = new THREE.BoxGeometry( 2000, 100, 2000 );
-    sol = new THREE.Mesh( planesol, new THREE.MeshPhongMaterial( { color: 0xffffff } ) );
+    sol = new Physijs.BoxMesh( planesol, new THREE.MeshPhongMaterial( { color: 0xffffff } ), 0, { restitution: .2, friction: .8 } );
     sol.position.set( 0, 0, -50 );
     sol.rotateX( - Math.PI / 2 );
     sol.receiveShadow = true;
+
+		scene.add( sol );
 
     textureLoader = new THREE.TextureLoader();
     textureLoader.load(grid, function ( texture ) {
@@ -159,13 +178,15 @@ class AppContainerComponent extends React.Component {
     });
 
     objectsOfScenes.push( sol );
+    objectsSave.push( sol );
+    collidableMeshList.push(sol)
 
     axes = new THREE.AxesHelper( 100 );
     axes.position.set( 0, 0, 0 );
 
-    scene.add( sol );scene.add( axes );scene.add(skybox);
+    //scene.add( sol );scene.add( axes );scene.add(skybox);
     //scene.add(helper);
-    collidableMeshList.push(sol)
+
 
     kaplaGostGeo = new THREE.BoxGeometry( this.state.kaplaDimensions[0], this.state.kaplaDimensions[1], this.state.kaplaDimensions[2] );
 		kaplaGostMaterial = new THREE.MeshBasicMaterial( { color: 0x00ff00, opacity: 0.5, transparent: true } );
@@ -174,15 +195,16 @@ class AppContainerComponent extends React.Component {
     kaplaGostMesh.position.set( 0,0,75 )
 		scene.add( kaplaGostMesh );
 
+
     var animate = () => {
       requestAnimationFrame( animate );
       renderer.render( scene, camera );
       controls.update();
-      var deltaTime = clock.getDelta();
-  		//this.updatePhysics( deltaTime );
+      scene.simulate()
     };
     this.initPhysics();
     animate();
+
 
   }
 
@@ -206,25 +228,6 @@ class AppContainerComponent extends React.Component {
       }
   }
 
-  isCollision = (kaplaGostMesh, collidableMeshList) =>  {
-    console.log("check collision")
-    var originPoint = kaplaGostMesh.position.clone();
-    for (var vertexIndex = 0; vertexIndex < kaplaGostMesh.geometry.vertices.length; vertexIndex++){
-    		var localVertex = kaplaGostMesh.geometry.vertices[vertexIndex].clone();
-    		var globalVertex = localVertex.applyMatrix4( kaplaGostMesh.matrix );
-    		var directionVector = globalVertex.sub( kaplaGostMesh.position );
-
-    		var ray = new THREE.Raycaster( originPoint, directionVector.clone().normalize() );
-    		var collisionResults = ray.intersectObjects( collidableMeshList );
-    		if ( collisionResults.length > 0 && collisionResults[0].distance < directionVector.length() ){
-          console.log("coll")
-          return true
-        }else{
-          return false
-        }
-
-    	}
-  }
 
   mousemove = (event) => {
     //console.log(event)
@@ -267,9 +270,6 @@ class AppContainerComponent extends React.Component {
     }
     */
 
-
-
-
   }
 
   onclick = (event) => {
@@ -283,9 +283,16 @@ class AppContainerComponent extends React.Component {
 
       		var ray = new THREE.Raycaster( originPoint, directionVector.clone().normalize() );
       		var collisionResults = ray.intersectObjects( collidableMeshList );
-      		if ( collisionResults.length > 0 && collisionResults[0].distance < directionVector.length() ){
+      		if ( collisionResults.length > 0 && collisionResults[0].distance < directionVector.length()-0.005 ){
+
+            var vector = kaplaGostMesh.geometry.vertices[vertexIndex].clone();
+            vector.applyMatrix4( kaplaGostMesh.matrixWorld );
+            console.log(vector)
             return
           }
+      }
+      if(this.state.mode !== "selection" || this.state.gravityActive ){
+        return
       }
       let mouseX = event.clientX - canvas.offsetLeft;
       let mouseY = event.clientY - canvas.offsetTop;
@@ -305,12 +312,13 @@ class AppContainerComponent extends React.Component {
 					} else {
             textureLoader = new THREE.TextureLoader().load(wood);
             var material = new THREE.MeshBasicMaterial( { map: textureLoader } );
-						var newKapla = new THREE.Mesh( new THREE.BoxBufferGeometry( this.state.kaplaDimensions[0], this.state.kaplaDimensions[1], this.state.kaplaDimensions[2] ), material );
+						var newKapla = new Physijs.BoxMesh( new THREE.BoxBufferGeometry( this.state.kaplaDimensions[0], this.state.kaplaDimensions[1], this.state.kaplaDimensions[2] ), material );
 						newKapla.position.copy( intersect.point );
             newKapla.rotation.z = this.state.rotation;
             newKapla.position.add(new THREE.Vector3 (this.state.kaplaOffset[0]+this.state.kaplaOffset[1]*Math.cos(this.state.rotation),this.state.kaplaOffset[1]+this.state.kaplaOffset[0]*Math.sin(this.state.rotation),this.state.kaplaOffset[2]));
 						scene.add( newKapla );
 						objectsOfScenes.push(newKapla);
+            objectsSave.push(newKapla.clone());
             collidableMeshList.push(newKapla)
 					}
 
@@ -399,6 +407,52 @@ class AppContainerComponent extends React.Component {
 		}
   }
 
+  toggleGravity = () => {
+    let gravityActive = this.state.gravityActive
+    this.setState({gravityActive : !this.state.gravityActive})
+    if(gravityActive){
+      scene.setGravity(new THREE.Vector3( 0, 0, -0 ))
+      console.log(objectsOfScenes)
+      let l = objectsOfScenes.length
+      for (var i = 0; i < l; i++) {
+        console.log(i)
+        if ( objectsOfScenes[i] !== sol ) {
+          //console.log(objectsOfScenes[i])
+          scene.remove(objectsOfScenes[i]);
+          //objectsOfScenes.splice(i, 1)
+
+        }
+      }
+      objectsOfScenes = [sol]
+      for (var i = 0; i < objectsSave.length; i++) {
+        let drawbackKapla = objectsSave[i].clone()
+        objectsOfScenes.push(drawbackKapla)
+        scene.add(drawbackKapla)
+      }
+    }else{
+      scene.setGravity(new THREE.Vector3( 0, 0, -100 ))
+    }
+  }
+
+  setRotationMode = () => {
+    this.setState({
+      mode:"rotation"
+    })
+  }
+
+  setSelectionMode = () => {
+    this.setState({
+      mode:"selection"
+    })
+  }
+
+  setDestructionMode = () => {
+    this.setState({
+      mode:"destruction"
+    })
+  }
+
+
 
   render(){
 
@@ -409,6 +463,16 @@ class AppContainerComponent extends React.Component {
         </div>
         <div id="canvas" style={{width:"70vw", height:"calc(100vh - 35px)"}}>
         </div>
+        <div style={{display:"flex", flexDirection:"row", position:"absolute", top:40, right:20, borderStyle:"solid", borderWidth:1, borderRadius:30, borderColor:"rgba(150,150,150,0.7)"}}>
+          <div style={{width:100, height:34, "border-top-left-radius":25,"border-bottom-left-radius":25, backgroundColor:this.state.mode==="rotation"?"rgba(150,255,150,1)":"rgba(220,220,220,1)"}} onClick={this.setRotationMode}>rotation</div>
+          <div style={{width:100, height:34,  backgroundColor:this.state.mode==="selection"?"rgba(150,255,150,1)":"rgba(220,220,220,1)"}} onClick={this.setSelectionMode}>selection</div>
+          <div style={{width:100, height:34, "border-top-right-radius":25,"border-bottom-right-radius":25, backgroundColor:this.state.mode==="destruction"?"rgba(150,255,150,1)":"rgba(220,220,220,1)"}} onClick={this.setDestructionMode}>destruction</div>
+        </div>
+        <label class="switch" style={{position:"absolute", top:80, right:20, backgroundColor:this.state.gravityActive?"rgba(150,255,150,1)":"rgba(220,220,220,1)", width:60,height:34, borderStyle:"solid", borderWidth:1, borderRadius:30, borderColor:"rgba(150,150,150,0.7)"}}>
+          <input type="checkbox" style={{opacity:0, width:0, height:0}} onClick={this.toggleGravity}/>
+          <CheckBox pose={this.state.gravityActive ? 'active' : 'inactive'}  style={{position:"absolute", height:28, width:28, top:3, backgroundColor:"white", borderRadius:"50%"}}>
+          </CheckBox>
+        </label>
       </div>
     )
 
