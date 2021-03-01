@@ -15,7 +15,7 @@
     "react-scripts": "3.2.0",
     "redux": "^4.0.4",
     "styled-components": "^4.4.1",
-    "three": "^0.110.0",
+    "three": "^0.125.0",
     "three-orbit-controls": "^82.1.0",
     "three-orbitcontrols-ts": "^0.1.2",
     "three-transform-controls": "^1.0.4"
